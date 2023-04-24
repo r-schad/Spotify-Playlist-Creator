@@ -34,6 +34,7 @@ def get_songs(num_songs):
         if audio_features:
             index = len(songs)
             id = track['id']
+            uri = track['uri']
             name = track['name']
             duration = track['duration_ms'] // 1000
 
@@ -43,7 +44,7 @@ def get_songs(num_songs):
             instrumentalness = audio_features['instrumentalness']
             valence = audio_features['valence']
 
-            song = Song(index, id, name, duration, acousticness, danceability, energy, instrumentalness, valence)
+            song = Song(index, id, uri, name, duration, acousticness, danceability, energy, instrumentalness, valence)
 
             songs += [song]
 
@@ -72,9 +73,10 @@ def get_relevant_feature(songs, feature):
 
 
 class Song():
-    def __init__(self, index, id, name, duration, acousticness, danceability, energy, instrumentalness, valence):
+    def __init__(self, index, id, uri, name, duration, acousticness, danceability, energy, instrumentalness, valence):
         self.index = index
         self.id = id
+        self.uri = uri
         self.name = name
         self.duration = duration
         self.acousticness = acousticness

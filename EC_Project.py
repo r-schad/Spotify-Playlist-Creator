@@ -4,6 +4,7 @@ import os
 import datetime
 from Song import get_songs, get_relevant_feature
 from SGA import SGA
+from initialize_spotipy import initialize_spotipy
 
 def playlist_fitness(population, durations, features, desired_duration):
     '''
@@ -49,8 +50,8 @@ def playlist_fitness(population, durations, features, desired_duration):
 
 
 if __name__ == '__main__':
-
-    AUDIO_FEATURE = 'acousticness' # ['acousticness', 'danceability', 'energy', 'instrumentalness', 'valence']
+    USER_NAME = 'Robbie Schad'
+    AUDIO_FEATURE = 'danceability' # ['acousticness', 'danceability', 'energy', 'instrumentalness', 'valence']
     DESIRED_MINUTES = 60
     desired_duration = DESIRED_MINUTES * 60
 
@@ -58,8 +59,8 @@ if __name__ == '__main__':
     POPULATION_SIZE = 400
     NUM_GENERATIONS = 300
 
-    mutation_rates = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
-    crossover_rates = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
+    mutation_rates = np.around(np.linspace(0.0,1.0,21), decimals=2)
+    crossover_rates = np.around(np.linspace(0.0,1.0,21), decimals=2)
 
     best_individuals = []
     all_results = []
@@ -84,9 +85,7 @@ if __name__ == '__main__':
 
     for mutation_rate in mutation_rates:
         for crossover_rate in crossover_rates:
-            if mutation_rate == 0.0 and crossover_rate == 0.0:
-                continue
-            for attempt in range(1):
+            for attempt in range(3):
                 trial_name = f'mr={mutation_rate}_cr={crossover_rate}_trial={attempt}'.replace('.', 'p')
                 # trial_path = run_path + '\\' + trial_name
                 sga = SGA(problem_name=trial_name, 
@@ -110,9 +109,22 @@ if __name__ == '__main__':
 
     sga_results.to_excel(run_path + '\\combined_results.xlsx')
 
+    best_idx = np.argmax([result['Best Fitness'] for result in all_results])
 
-    best_playlist = np.asarray(songs)[np.where(best_individual)] # TODO: implement this
+    best_genome = best_individuals[best_idx]
+    best_fitness = all_results[best_idx]['Best Fitness']
 
+    best_playlist = np.asarray(songs)[np.where(best_individual)] 
+    song_uris = [song.uri for song in best_playlist]
+
+    sp = initialize_spotipy(USER_NAME)
+    id = sp.me()['id']
+    playlist_name = f'EC Project - Fitness={best_fitness} - duration={np.sum(durations[np.where(best_genome)])}sec - {AUDIO_FEATURE}={round(np.mean(features[np.where(best_genome)]), 3)}'
+    playlist = sp.user_playlist_create(id, name=playlist_name)
+
+    playlist_id = playlist['id']
+
+    sp.user_playlist_add_tracks(id, playlist_id, song_uris)
 
     pass
     

@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import datetime
 import os, math
 from sklearn.metrics.pairwise import euclidean_distances
+from initialize_spotipy import initialize_spotipy
 
 class SGA():
     def __init__(self, problem_name, fitness_function, desired_duration, durations, features, population_size, genome_length, mutation_rate, crossover_rate, directory):
@@ -20,7 +21,7 @@ class SGA():
         # (this means we can just call the normal SGA option name, and it will call the correct function)
         # e.g. calling sga.mutation() will automatically call sga.fixed_bitwise_mutation()
 
-        self.initialization = self.init_uniform_rand_pop
+        self.initialization = self.init_weighted_rand_pop
         self.parent_selection = self.random_pairing
         self.crossover = self.crossover_n_swap
         self.mutation = self.fixed_bitwise_mutation
@@ -48,75 +49,20 @@ class SGA():
         self.crossover_rate = crossover_rate
 
 
-    def init_uniform_rand_pop(self):
+    def init_weighted_rand_pop(self):
         '''
-        INITIALIZATION: Uniform Random
+        INITIALIZATION: Weighted Random 
+        Weighted such that a 0-bit=75%, and 1-bit=25% of the bits in the genome because this will start us closer to 
+        the target durartion upon initialization
         
-        Returns a uniform, random 2-d, binary [0/1] array of shape (n, b)
+        
+        Returns a weighted, random 2-d, binary [0/1] array of shape (n, b)
             where n is the population size,
             and b is the number of bits in the genome. 
         '''
         num_genome_bits = self.representation_type.shape[0]
         # low is inclusive, high is exclusive, so this gives us binary [0/1] values
-        return np.asarray(np.random.choice([0, 1], size=(self.population_size, num_genome_bits)), dtype=int)
-
-
-    def fit_prop_roulette_parent_selection(self):
-        '''
-        PARENT SELECTION: Fitness Proportional Roulette Wheel
-
-        Generates two arrays of parents, as selected by the fitness-proportional roulette wheel. 
-
-        Returns a tuple of the array of parent_1 indexes and the array of parent_2 indexes.
-        '''
-        # get the raw fitness of the entire population
-        # (using absolute value to account for minimizing or maximizing fitness functions)
-        raw_fitnesses = self.fitness_function(self.population, self.durations, self.features, self.desired_duration)
-        min_fitness = np.min(raw_fitnesses)
-
-        # scale fitnesses so minimum is 0.0
-        relative_fitnesses = raw_fitnesses - min_fitness
-        # rescale fitnesses so minimum is 1.0
-        relative_fitnesses = np.add(relative_fitnesses, 1)
-
-        # normalize relative fitnesses by the sum of all fitness scores
-        fitnesses_sum = np.sum(relative_fitnesses)
-        relative_fitnesses = np.divide(relative_fitnesses, fitnesses_sum)
-        # now relative_fitnesses is a *NON-CUMULATIVE* probability density function (PDF)
-
-        # create cumulative distribution function (CDF) of fitnesses (i.e. the roulette wheel) from the PDF
-        roulette_wheel = np.zeros(shape=relative_fitnesses.shape) # roulette wheel should be same shape as relative_fitnesses
-
-        # first value in CDF is the first relative_fitness value
-        # (since the CDF is cumulative, the first CDF value is just the first fitness value, and all following values accumulate from that)
-        roulette_wheel[0] = relative_fitnesses[0]
-
-        # iterate through each individual relative fitness score and assign the slot size in the roulette wheel
-        for i in range(1, roulette_wheel.shape[0]):
-            # slot sizes are the (previous CDF value) + (individual's relative fitness)
-            roulette_wheel[i] = roulette_wheel[i-1] + relative_fitnesses[i]
-
-        # get 2 random lists of values [0,1) for parent selection - each list contains (1/2 of the population size) elements
-        # (this is because parent selection is done by pairs, and each pair will produce 2 children)
-        random_1 = np.random.rand(self.population_size // 2)
-        random_2 = np.random.rand(self.population_size // 2)
-
-        # now convert random lists of floating point values to parent indexes based on roulette wheel
-        parent_1s = []
-        parent_2s = []
-
-        # get the two parent indexes for each pair of random numbers
-        for pair_count in range(random_1.shape[0]):
-            # select the first index of the values where the random value < roulette wheel value to get parent index
-            parent_1s.append(np.argwhere(random_1[pair_count] < roulette_wheel)[0][0])
-            parent_2s.append(np.argwhere(random_2[pair_count] < roulette_wheel)[0][0])
-
-        # convert parent arrays to numpy arrays for consistency with rest of code
-        parent_1s = np.array(parent_1s)
-        parent_2s = np.array(parent_2s)
-
-        # return a tuple of our 2 arrays of selected parent indexes
-        return (parent_1s, parent_2s)
+        return np.asarray(np.random.choice([0, 1], size=(self.population_size, num_genome_bits), p=[0.75, 0.25]), dtype=int)
 
 
     def random_pairing(self):
@@ -155,10 +101,6 @@ class SGA():
         ''' 
 
         crossover_pop = np.ndarray(self.population.shape)
-        # n_probs_cdf = np.flip(np.linspace(0.0, 1.0, self.representation_type.shape[0]))
-        # n_probs_cdf_offset = np.roll(np.flip(np.linspace(0.0, 1.0, self.representation_type.shape[0])), shift=-1)
-        # n_probs_cdf_offset[-1] = 0
-        # n_probs = probs_cdf - n_probs_cdf_offset # literally just a uniform distribution bruh
 
         # iterate through each pair of parents
         for i in range(p1s.shape[0]):
@@ -175,41 +117,6 @@ class SGA():
                 # now store new (crossover'd) genome of both children in crossover_pop
                 crossover_pop[2 * i] = np.where(where_to_swap, self.population[p2s[i]], self.population[p1s[i]])
                 crossover_pop[(2 * i) + 1] = np.where(where_to_swap, self.population[p1s[i]], self.population[p2s[i]])
-
-            else: # don't crossover, make children identical to parents
-                crossover_pop[2 * i] = self.population[p1s[i]]
-                crossover_pop[(2 * i) + 1] = self.population[p2s[i]]
-
-        return crossover_pop
-
-
-
-    def crossover_1p(self, p1s, p2s):
-        '''
-        CROSSOVER: Single-Point Crossover
-
-        For approximately <crossover_rate> of the population, performs a 1-point crossover of the two parent genomes, 
-        which produces two resulting, pre-mutation, crossover'd genomes. 
-
-        For the other <1-crossover_rate> of the population, appends the two provided genomes into the array of resultatnt genomes.
-
-        Returns an array of the pre-mutation, crossover population genomes.
-        ''' 
-
-        crossover_pop = np.ndarray(self.population.shape)
-        # iterate through each pair of parents
-        for i in range(p1s.shape[0]):
-            # roll a random number [0,1) to determine if we should crossover this pair of parents
-            if np.random.rand() < self.crossover_rate: # do crossover
-                # get random crossover point between [0, b-1] where b is number of bits in representation
-                xover_pt = np.random.randint(0, self.representation_type.shape[0])
-
-                # now store new (crossover'd) genome of both children in crossover_pop
-
-                # first chunk of p1's genome with second chunk of p2's genome
-                crossover_pop[2 * i] = np.concatenate((self.population[p1s[i]][0:xover_pt], self.population[p2s[i]][xover_pt:]))
-                # first chunk of p2's genome with second chunk of p1's genome
-                crossover_pop[(2 * i) + 1] = np.concatenate((self.population[p2s[i]][0:xover_pt], self.population[p1s[i]][xover_pt:]))
 
             else: # don't crossover, make children identical to parents
                 crossover_pop[2 * i] = self.population[p1s[i]]
@@ -238,25 +145,6 @@ class SGA():
 
     def calc_mutation_rate(self, gen):
         return self.mutation_rate * np.exp(-1 * gen / 2)
-
-
-    def mu_plus_lambda(self, lambda_pop):
-        all_individuals = np.concatenate((self.population, lambda_pop))
-        fitnesses = self.fitness_function(all_individuals)
-
-
-    def full_generational_replacement(self, new_pop):
-        '''
-        SURVIVOR SELECTION: Full Replacement
-        REPLACEMENT: Generational
-
-        Since all children will just replace their parents in this SGA implementation,
-        this function just swaps out the old population array with the new, array of post-mutation, population genomes.
-
-        Returns None.
-        '''
-        assert self.population.shape == new_pop.shape, "New population isn't the same size"
-        self.population = new_pop
 
 
     def percentage_nonunique_genomes(self):
@@ -356,8 +244,7 @@ class SGA():
                 xover_pop = self.crossover(p1s, p2s, max_n)
 
                 # now apply mutation strategy to the temporary population to get our new population
-                mutation_rate = self.calc_mutation_rate(gen)
-                lambda_pop = self.mutation(xover_pop, mutation_rate)
+                lambda_pop = self.mutation(xover_pop, self.mutation_rate)
 
                 # and replace our population with our new population based on the replacement strategy
                 full_pop = np.vstack((self.population, lambda_pop))
